@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <link rel="stylesheet" type="text/css" href="build/tauCharts.min.css">
+    <!--<link rel="stylesheet" type="text/css" href="style.css">-->
+    <!--<script src="build/react.js"></script>-->
+    <!--<script src="build/react-dom.js"></script>-->
+    <script src="build/d3.js" type="text/javascript"></script>
+    <script src="build/underscore.js" type="text/javascript"></script>
+    <script src="build/tauCharts.min.js" type="text/javascript"></script>
+    <style>
+        #chart{width: 1200px; height: 400px}
+        #news{width: 1200px; height: 200px}
+        path {
+            stroke-width: 12px !important;
+            stroke-linecap:round;
+            stroke-linejoin:round;
+        }
+    </style>
+</head>
+<body>
+<div id="chart"></div>
+<div id="news"></div>
+<script src="data.js"></script>
+<script src="news.js"></script>
+<script>
+
+
+
+var date = d3.time.format('%d.%m.%Y');
+var newsDate = d3.time.format('%Y-%m-%d %H:%M:%S+03'); //2015-11-02 16:07:00+03
+var weekNumber = d3.time.format('%Y-%U');
+
+function firstDayOfWeek (date) {
+
+    var year = +date.split('-')[0];
+    var week = +date.split('-')[1];
+
+    // Jan 1 of 'year'
+    var d = new Date(year, 0, 1),
+            offset = d.getTimezoneOffset();
+
+    // ISO: week 1 is the one with the year's first Thursday
+    // so nearest Thursday: current date + 4 - current day number
+    // Sunday is converted from 0 to 7
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+
+    // 7 days * (week - overlapping first week)
+    d.setTime(d.getTime() + 7 * 24 * 60 * 60 * 1000
+            * (week + (year == d.getFullYear() ? -1 : 0 )));
+
+    // daylight savings fix
+    d.setTime(d.getTime()
+            + (d.getTimezoneOffset() - offset) * 60 * 1000);
+
+    // back to Monday (from Thursday)
+    d.setDate(d.getDate() - 3);
+
+    return d;
+}
+
+
+var tours = _.chain(matches)
+    .groupBy(function(match){return match.tour})
+            .toArray()
+            .map(function(tour, index){
+                 return {key: (index + 1).toString(), values: tour}
+            })
+    .map(function(tour){
+
+        tour.standing =
+        _.chain(tour.values)
+        .map(function(match){
+
+            var goals = match.result.split(':').map(function(g){return parseInt(g)});
+            var won = goals[0] > goals[1];
+            var draw = goals[0] === goals[1];
+            var lost = goals[0] < goals[1];
+
+            var home = {
+                name: match.home,
+                points: (draw) ? 1 : ((won) ? 3 : 0),
+                goals_for: goals[0],
+                goals_against: goals[1],
+                goals_diff: goals[0] - goals[1],
+                won: won ? 1 : 0,
+                draw: draw ? 1 : 0,
+                lost: lost ? 1 : 0
+            };
+            var away = {
+                name: match.away,
+                points: (draw) ? 1 : ((won) ? 0 : 3),
+                goals_for: goals[1],
+                goals_against: goals[0],
+                goals_diff: goals[1] - goals[0],
+                won: won ? 0 : 1,
+                draw: draw ? 1 : 0,
+                lost: lost ? 0 : 1
+            };
+
+            return [home, away]
+
+        })
+        .flatten()
+        .value();
+
+
+    return tour;
+
+    }).reduce(function(p, cur, index, array){
+
+        var prev = _.last(p);
+
+        cur.standing = _.sortBy(cur.standing, function(c){return c.name}).map(function(cur, index){
+            for (var attr in cur) { cur[attr] = (attr !== 'name' ) ? cur[attr] = prev.standing[index][attr] + cur[attr] : cur[attr] }
+            return cur;
+        });
+
+        p.push(cur);
+
+        return p;
+    }, [{
+        key: '0',
+        values: [],
+        standing: _.sortBy(logos.map(function (club) {
+            return {
+                name: club.name,
+                points: 0,
+                goals_for: 0,
+                goals_against: 0,
+                goals_diff: 0,
+                won: 0,
+                draw: 0,
+                lost: 0
+            };
+        }), function(c){return c.name})
+    }]).rest().initial().map(function(tour, tourNumber){
+
+            var day = tour.values[7].date.split(', ')[1];
+            return _.chain(tour.standing)
+                    .sortBy(function(club){return club.name})
+                    .sortBy(function(club){return -club.goals_diff})
+                    .sortBy(function(club){return -club.points})
+                    .map(function(club, pos){
+                        club.position = (pos + 1).toString();
+                        club.tour = tourNumber + 1;
+                        club.day = date.parse(day);
+                        club.percentage = (club.points / (club.tour * 3));
+                        return club
+                    })
+                    .value()
+        })
+        .flatten()
+        .value();
+
+var chart = new tauCharts.Chart({
+    data: tours,
+    type:'line',
+    x: 'day',
+    y: 'position',
+    color: 'name',
+    size: null,
+    guide: {
+        interpolate: 'monotone',
+        showAnchors: false
+    },
+    dimensions: {
+        tour     : { type: 'measure' },
+        percentage     : { type: 'measure' },
+        day     : { type: 'measure', scale: 'time' },
+        points     : { type: 'measure' },
+        goals_diff: { type: 'measure' },
+        position : { type: 'order', order: _.range(1, 17).map(function(n){return n.toString()}).reverse() },
+        name     : { type: 'category' }
+    },
+    plugins:
+            [
+//                tauCharts.api.plugins.get('tooltip')(),
+                tauCharts.api.plugins.get('legend')(),
+//                tauCharts.api.plugins.get('quick-filter')(),
+//                tauCharts.api.plugins.get('trendline')()
+            ]
+});
+chart.renderTo('#chart');
+
+var news = news.map(function(item){
+    item.time = new Date(item.time);
+    return item;});
+    console.log(news);
+
+var selfNews = _.filter(news, function(item){return item.text.indexOf('Первая лига') !== 0 && item.text.indexOf('Кубок Беларуси') });
+
+var nested = d3.nest()
+        .key(function(d){return weekNumber(d.time)})
+        .key(function(d){return d.team})
+        .rollup(function(l) {return {posts: l.length, comments: l.map(function(d){return d.comments}).reduce(function(prev, cur){return prev + cur},0)}; })
+        .entries(selfNews);
+
+//console.log(nested);
+
+var flatten = _.chain(nested).map(function(c){
+    c.date = firstDayOfWeek(c.key);
+    c.commSum = c.values.map(function(t){return t.values.comments}).reduce(function(prev,cur){return prev + cur}, 0);
+    c.postsSum = c.values.map(function(t){return t.values.posts}).reduce(function(prev,cur){return prev + cur}, 0);
+    return c.values.map(function(t){
+        t.date = c.date;
+        t.team = t.key;
+        t.comments = t.values.comments;
+        t.posts = t.values.posts;
+        t.perComm = t.comments / c.commSum;
+        t.perPosts = t.posts / c.postsSum;
+        delete t.key;
+        delete t.values;
+
+        return t
+    })
+}).flatten().value();
+
+console.log(flatten);
+
+var newsChart = new tauCharts.Chart({
+    data: flatten,
+    type:'scatterplot',
+    x: 'date',
+    y: 'perComm',
+    color: 'team',
+    size: null,
+    guide: {
+//        interpolate: 'monotone',
+//        showAnchors: false
+    },
+    dimensions: {
+        perPosts     : { type: 'measure' },
+        perComm     : { type: 'measure' },
+        comments     : { type: 'measure' },
+        date     : { type: 'measure', scale: 'time' },
+//        date     : { type: 'category' },
+        team     : { type: 'category' }
+    },
+    plugins:
+            [
+                tauCharts.api.plugins.get('tooltip')(),
+        tauCharts.api.plugins.get('legend')(),
+//                tauCharts.api.plugins.get('quick-filter')(),
+//                tauCharts.api.plugins.get('trendline')()
+    ]
+});
+newsChart.renderTo('#news');
+
+
+
+
+
+</script>
+</body>
+</html>
